@@ -8,6 +8,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from dataloader import TrainDataset
+
 def parse_args(args=None):
     parser = argparse.ArgumentParser(
         description='Training and Testing Knowledge Graph Embedding Models',
@@ -95,7 +97,21 @@ def main(args):
     nentity = len(entity2id)
     nrelation = len(relation2id)
     
+    # test should change to test.txt
+    train_triples = read_triple(os.join(args.data_path, 'train.txt'), entity2id, relation2id)
     test_triples = read_triple(os.path.join(args.data_path, 'test.txt'), entity2id, relation2id)
+
+    train_dataloader_head = DataLoader(
+        TrainDataset(t_triples,
+                    nentity,
+                    nrelation,
+                    
+                    ),
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=1,
+        collate_fn=TrainDataset.collate_fn
+    )
 
     for triple in test_triples:
         print(triple[0], " ", triple[1], " ", triple[2])

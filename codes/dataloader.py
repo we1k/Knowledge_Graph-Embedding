@@ -20,13 +20,71 @@ def time_it(fn):
 class TrainDataset(Dataset):
 
     def _get_adj_mat(self):
-        a_mat = sparse.dok_matrix((self.))
+        a_mat = sparse.dok_matrix((self.nentity, self.nentity))
+        for (h, _, t) in self.triples:
+            a_mat[t, h] = 1
+            a_mat[h, t] = 1
     
+        a_mat = a_mat.tocsr()
+        return a_mat
+
     @time_it
     def build_k_hop(self, k_hop, dataset_name):
-        pass
+        if k_hop == 0:
+            return None
+        
+        save_path = f'cached_matrices/matrix_{dataset_name}_k{k_hop}_nrw0.npz'
 
+        if os.path.exists(save_path):
+            logging.info(f'Using cache from {save_path}')
+            k_mat = sparse.load_npz(save_path)
+            return k_mat
 
+        a_mat = self._get_adj_mat()
+        _k_mat = a_mat ** (k_hop - 1)
+        k_mat = _k_mat * a_mat + _k_mat
+
+        sparse.save_npz(save_path, k_mat)
+
+        return k_mat
+        
+    @time_it
+    def build_k_rw(self, n_rw, k_hop, dataset_name):
+        if n_rw == 0 or k_hop == 0:
+            return None
+
+        save_path = f'cached_matrices/matrix_{dataset_name}_k{k_hop}_nrw{n_rw}.npz'
+
+        if os.path.exists(save_path):
+            logging.info(f'Using cache from {save_path}')
+            k_mat = sparse.load_npz(save_path)
+            return k_mat
+
+        a_mat = self._get_adj_mat()
+        k_mat = sparse.dok_matrix((self.nentity, self.nentity))
+
+        randomly_sampled = 0
+
+        for i in range(0, self.nentity):
+            neighbors = a_mat[i]
+            if len(neighbors.indices) == 0:
+                randomly_sampled += 1
+                walker = np.random.randint(self.nentity, size=n_rw)
+                k_mat[i, walker] = 1
+            else:
+                for _ in range(n_rw):
+                    walker = i
+                    for _ in range(0, k_hop):
+                        idx = np.random.randint(len(neighbors.indices))
+                        walker = neighbors.indices[idx]
+                        neighbors = a_mat[walker]
+                    k_mat[i, walker] += 1
+        logging.info(f'randomly_sampled: {randomly_sampled}')
+        k_mat = k_mat.tocsr()
+        
+        sparse.save_npz(save_path, k_mat)
+
+        return k_mat
 
     def __init__(self, triples, nentity, nrelation, negative_sample_size, mode, k_hop, n_rw, dsn):
         self.len = len(triples)
@@ -55,4 +113,10 @@ class TrainDataset(Dataset):
         mode = data[0][3]
         return positive_sample, negative_sample, subsample_weight, mode
 
-    
+def main():
+
+    dataset = TrainDatas()
+
+
+if __name__ == "__main__":
+    main()
