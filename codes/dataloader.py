@@ -98,25 +98,73 @@ class TrainDataset(Dataset):
         self.true_head, self.true_tail = self.get_true_head_and_tail(self.triples)
         self.dsn = dsn.split('/')[1]  # dataset name
 
+        if n_rw == 0:
+            self.k_neighbors = self.build_k_hop(k_hop, dataset_name=self.dsn)
+        else:
+            self.k_neighbors = self.build_k_rw(n_rw=n_rw, k_hop=k_hop, dataset_name=self.dsn)
+
+
     def __len__(self):
         return self.len
 
     
     def __getitem__(self, idx):
+        # 1. Read one data from file (e.g. using numpy.fromfile, PIL.Image.open).
+        # 2. Preprocess the data (e.g. torchvision.Transform).
+        # 3. Return a data pair (e.g. image and label).
         pass
 
     @staticmethod
     def collate_fn(data):
+        '''
+        Return:
+        next(dataloader)
+        '''
         positive_sample = torch.stack([_[0] for _ in data], dim=0)
         negative_sample = torch.stack([_[1] for _ in data], dim=0)
         subsample_weight = torch.cat([_[2] for _ in data], dim=0)
         mode = data[0][3]
         return positive_sample, negative_sample, subsample_weight, mode
 
-def main():
+    @staticmethod
+    def count_frequency(triplet, start=4):
+        '''
+        get the frequency
+        '''
+        count = {}
+        for head, relation, tail in triples:
+            if (head, relation) not in count:
+                count[(head, relation)] = start
+            else:
+                count[(head, relation)] += 1
 
-    dataset = TrainDatas()
+            if (tail, -relation - 1) not in count:
+                count[(tail, -relation - 1)] = start
+            else:
+                count[(tail, -relation - 1)] += 1
+        return count
 
+    @staticmethod
+    def get_true_head_and_tail(triples):
+        pass
 
-if __name__ == "__main__":
-    main()
+# todo
+class BidirectionalOneShotIterator(object):
+    def __init__(self, dataloader_head, dataloader_tail):
+        self.iterator_head = self.one_shot_iterator(dataloader_head)
+        self.iterator_tail = self.one_shot_iterator(dataloader_tail)
+        self.step = 0
+
+    def __next__(self):
+        self.step += 1
+        if self.step % 2 == 0:
+            data = next(self.iterator_head)
+        else:
+            data = next(self.iterator_tail)
+        return data
+    
+    @staticmethod
+    def one_shot_iterator(dataloader):
+        while True:
+            for data in dataloader:
+                yield data
