@@ -215,7 +215,7 @@ class TrainDataset(Dataset):
                 true_tail[(head, relation)] = []
             true_tail[(head, relation)].append(tail)
             if (relation, tail) not in true_head:
-                true_head[relation, tail)] = []
+                true_head[(relation, tail)] = []
             true_head[(relation, tail)].append(head)
         
         # unique the idx of true_head and tail
@@ -239,29 +239,36 @@ class TestDataset(Dataset):
         return self.len
 
     def __getitem__(self, idx):
+        '''
+        test sample have bias = 0 
+        true sample have bias = -1
+        '''
         head, relation, tail = self.triples[idx]
 
+        # test all possible false sample to calculate the metric
         if self.mode == 'head-batch':
             tmp = [(0, rand_head) if (rand_head, relation, tail) not in self.triple_set
-                   else (-1, head) for rand_head in range(self.nentity)]
+                else  (-1, head) for rand_head in range(self.nentity)]
             tmp[head] = (0, head)
         elif self.mode == 'tail-batch':
             tmp = [(0, rand_tail) if (head, relation, rand_tail) not in self.triple_set
-                   else (-1, tail) for rand_tail in range(self.nentity)]
+                else(-1, tail) for rand_tail in range(self.nentity)]
             tmp[tail] = (0, tail)
-        else:
-            raise ValueError('negative batch mode %s not supported' % self.mode)
 
         tmp = torch.LongTensor(tmp)
         filter_bias = tmp[:, 0].float()
         negative_sample = tmp[:, 1]
 
-        positive_sample = torch.LongTensor((head, relation, tail))
+        postive_sample = torch.LongTensor((head, relation, tail))
 
-        return positive_sample, negative_sample, filter_bias, self.mode
-        
+        return postive_sample, negative_sample, filter_bias, self.mode
+
     @staticmethod
     def collate_fn(data):
+        '''
+        Return:
+            positive_sample.size() = (1, data.size()[0])
+        '''
         positive_sample = torch.stack([_[0] for _ in data], dim=0)
         negative_sample = torch.stack([_[1] for _ in data], dim=0)
         filter_bias = torch.stack([_[2] for _ in data], dim=0)
