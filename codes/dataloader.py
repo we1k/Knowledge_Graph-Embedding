@@ -90,15 +90,19 @@ class TrainDataset(Dataset):
     def __init__(self, triples, nentity, nrelation, negative_sample_size, mode, k_hop, n_rw, dsn):
         self.len = len(triples)
         self.triples = triples
-        self.triples_set = set(triples)
+        self.triple_set = set(triples)
         self.nentity = nentity
         self.nrelation = nrelation
         self.negative_sample_size = negative_sample_size
         self.mode = mode
         self.count = self.count_frequency(triples)
         self.true_head, self.true_tail = self.get_true_head_and_tail(self.triples)
-        self.dsn = dsn.split('/')[1]  # dataset name
+        self.dsn = dsn.split('/')[1] # dataset name
 
+        # self.model = model
+        # self.k_mat = self.build_k_hop(k_hop, dataset_name=self.dsn)
+        # need to calculate the score of new training set
+        # after each epoch training to get the new neighbor
         if n_rw == 0:
             self.k_neighbors = self.build_k_hop(k_hop, dataset_name=self.dsn)
         else:
@@ -116,8 +120,8 @@ class TrainDataset(Dataset):
         positive_sample = self.triples[idx]
         head, relation, tail = positive_sample
 
-        subsample_weight = self.count[(head, relation)] + self.count[(tail, -relation - 1)]
-        subsample_weight = torch.Tensor(1 / torch.Tensor([subsample_weight]))
+        subsampling_weight = self.count[(head, relation)] + self.count[(tail, -relation - 1)]
+        subsampling_weight = torch.sqrt(1 / torch.Tensor([subsampling_weight]))
         
         # indice of negative sample
         negative_sample_list = []
@@ -139,6 +143,7 @@ class TrainDataset(Dataset):
                 negative_sample = np.random.randint(self.nentity, size=self.negative_sample_size * 2)
             
             # guaranteen the observed true sample not been chosen
+            # and there are unique
             if self.mode == 'head-batch':
                 mask = np.in1d(
                     negative_sample,
@@ -169,7 +174,7 @@ class TrainDataset(Dataset):
 
         positive_sample = torch.LongTensor(positive_sample)
 
-        return positive_sample, negative_sample, subsample_weight, self.mode
+        return positive_sample, negative_sample, subsampling_weight, self.mode
 
     @staticmethod
     def collate_fn(data):
@@ -254,6 +259,8 @@ class TestDataset(Dataset):
             tmp = [(0, rand_tail) if (head, relation, rand_tail) not in self.triple_set
                 else(-1, tail) for rand_tail in range(self.nentity)]
             tmp[tail] = (0, tail)
+        else:
+            raise ValueError('negative batch mode %s not supported' % self.mode)
 
         tmp = torch.LongTensor(tmp)
         filter_bias = tmp[:, 0].float()
@@ -266,6 +273,7 @@ class TestDataset(Dataset):
     @staticmethod
     def collate_fn(data):
         '''
+         vertirizal the data, makes the training more efficient
         Return:
             positive_sample.size() = (1, data.size()[0])
         '''
@@ -297,5 +305,4 @@ class BidirectionalOneShotIterator(object):
             for data in dataloader:
                 yield data
 
-if __name__ == "__main__":
     
