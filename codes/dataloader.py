@@ -169,7 +169,7 @@ class TrainDataset(Dataset):
 
         positive_sample = torch.LongTensor(positive_sample)
 
-        return postive_sample, negative_sample, subsample_weight, self.mode
+        return positive_sample, negative_sample, subsample_weight, self.mode
 
     @staticmethod
     def collate_fn(data):
@@ -259,9 +259,9 @@ class TestDataset(Dataset):
         filter_bias = tmp[:, 0].float()
         negative_sample = tmp[:, 1]
 
-        postive_sample = torch.LongTensor((head, relation, tail))
+        positive_sample = torch.LongTensor((head, relation, tail))
 
-        return postive_sample, negative_sample, filter_bias, self.mode
+        return positive_sample, negative_sample, filter_bias, self.mode
 
     @staticmethod
     def collate_fn(data):
@@ -296,3 +296,6 @@ class BidirectionalOneShotIterator(object):
         while True:
             for data in dataloader:
                 yield data
+
+if __name__ == "__main__":
+    
