@@ -65,17 +65,7 @@ def override_config(args):
     '''
     Override model and data configuration
     '''
-
-    with open(os.path.join(args.init_checkpoint, 'config.json'), 'r') as fjson:
-        argparse_dict = json.load(fjson)
-
-    if args.data_path is None:
-        args.data_path = argparse_dict['data_path']
-    args.model = argparse_dict['model']
-    args.double_entity_embedding = argparse_dict['double_entity_embedding']
-    args.double_relation_embedding = argparse_dict['double_relation_embedding']
-    args.hidden_dim = argparse_dict['hidden_dim']
-    args.test_batch_size = argparse_dict['test_batch_size']
+    pass
 
 def save_model(model, optimizer, save_variable_list, args):
         '''
@@ -250,7 +240,7 @@ def main(args):
         current_learning_rate = args.learning_rate
 
         optimizer = torch.optim.Adam(
-            filter(lambda p: p.require_grad, kge_model.parameters()),
+            filter(lambda p: p.requires_grad, kge_model.parameters()),
             lr=current_learning_rate
         )
 
@@ -305,7 +295,7 @@ def main(args):
                 current_learning_rate = current_learning_rate / 10
                 logging.info('Change learning_rate to %f at step %d' % (current_learning_rate, step))
                 optimizer = torch.optim.Adam(
-                    filter(lambda p: p.require_grad, kge_model.parameters()),
+                    filter(lambda p: p.requires_grad, kge_model.parameters()),
                     lr=current_learning_rate
                 )
                 warm_up_steps = warm_up_steps * 3
