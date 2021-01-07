@@ -1,0 +1,2 @@
+04667406	_hypernym	04616059
+04667406	_derivationally_related_form	01484083

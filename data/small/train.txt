@@ -1,0 +1,10 @@
+06845599	_member_of_domain_usage	03754979
+06845599	_member_of_domain_usage	03587715
+06845599	_member_of_domain_usage	03189995
+02390470	_derivationally_related_form	10363913
+10722385	_hypernym	10363913
+10363913	_derivationally_related_form	00345761
+04907269	_hypernym	04616059
+04635631	_hypernym	04616059
+04667406	_hypernym	04616059
+04667406	_derivationally_related_form	01484083

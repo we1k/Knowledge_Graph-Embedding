@@ -1,0 +1,3 @@
+02390470	_derivationally_related_form	10363913
+10722385	_hypernym	10363913
+10363913	_derivationally_related_form	00345761
