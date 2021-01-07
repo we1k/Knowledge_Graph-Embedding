@@ -12,6 +12,7 @@ from model import KGEModel
 from dataloader import TrainDataset
 from dataloader import BidirectionalOneShotIterator
 
+
 def parse_args(args=None):
     parser = argparse.ArgumentParser(
         description='Training and Testing Knowledge Graph Embedding Models',
@@ -65,10 +66,21 @@ def override_config(args):
     '''
     Override model and data configuration
     '''
-    pass
+
+    with open(os.path.join(args.init_checkpoint, 'config.json'), 'r') as fjson:
+        argparse_dict = json.load(fjson)
+
+    if args.data_path is None:
+        args.data_path = argparse_dict['data_path']
+    args.model = argparse_dict['model']
+    args.double_entity_embedding = argparse_dict['double_entity_embedding']
+    args.double_relation_embedding = argparse_dict['double_relation_embedding']
+    args.hidden_dim = argparse_dict['hidden_dim']
+    args.test_batch_size = argparse_dict['test_batch_size']
+
 
 def save_model(model, optimizer, save_variable_list, args):
-        '''
+    '''
     Save the parameters of the model and the optimizer,
     as well as some other variables such as step and learning_rate
     '''
@@ -96,13 +108,18 @@ def save_model(model, optimizer, save_variable_list, args):
         relation_embedding
     )
 
+
 def read_triple(file_path, entity2id, relation2id):
+    '''
+    Read triples and map them into ids.
+    '''
     triples = []
-    with open(file_path) as f:
-        for line in f:
+    with open(file_path) as fin:
+        for line in fin:
             h, r, t = line.strip().split('\t')
             triples.append((entity2id[h], relation2id[r], entity2id[t]))
     return triples
+
 
 def set_logger(args):
     '''
@@ -113,7 +130,7 @@ def set_logger(args):
         log_file = os.path.join(args.save_path or args.init_checkpoint, 'train.log')
     else:
         log_file = os.path.join(args.save_path or args.init_checkpoint, 'test.log')
-    
+
     logging.basicConfig(
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=logging.INFO,
@@ -127,27 +144,31 @@ def set_logger(args):
     console.setFormatter(formatter)
     logging.getLogger('').addHandler(console)
 
+
 def log_metrics(mode, step, metrics):
+    '''
+    Print the evaluation logs
+    '''
     for metric in metrics:
         logging.info('%s %s at step %d: %f' % (mode, metric, step, metrics[metric]))
 
 
 def main(args):
     if (not args.do_train) and (not args.do_valid) and (not args.do_test):
-        raise ValueError('one of train/val/test mode must be chosen')
-    
+        raise ValueError('one of train/val/test mode must be choosed.')
+
     if args.init_checkpoint:
         override_config(args)
     elif args.data_path is None:
-        raise ValueError('one of init_checkpoint/data_path must be chosen')
-    
+        raise ValueError('one of init_checkpoint/data_path must be choosed.')
+
     if args.do_train and args.save_path is None:
         raise ValueError('Where do you want to save your trained model?')
 
     if args.save_path and not os.path.exists(args.save_path):
         os.makedirs(args.save_path)
 
-    # set logs to console and checkpoint
+    # Write logs to checkpoint and console
     set_logger(args)
 
     with open(os.path.join(args.data_path, 'entities.dict')) as fin:
@@ -161,10 +182,10 @@ def main(args):
         for line in fin:
             rid, relation = line.strip().split('\t')
             relation2id[relation] = int(rid)
-    
+
     nentity = len(entity2id)
     nrelation = len(relation2id)
-    
+
     args.nentity = nentity
     args.nrelation = nrelation
 
@@ -173,7 +194,6 @@ def main(args):
     logging.info('#entity: %d' % nentity)
     logging.info('#relation: %d' % nrelation)
 
-    # test should change to test.txt
     train_triples = read_triple(os.path.join(args.data_path, 'train.txt'), entity2id, relation2id)
     logging.info('#train: %d' % len(train_triples))
     valid_triples = read_triple(os.path.join(args.data_path, 'valid.txt'), entity2id, relation2id)
@@ -181,9 +201,7 @@ def main(args):
     test_triples = read_triple(os.path.join(args.data_path, 'test.txt'), entity2id, relation2id)
     logging.info('#test: %d' % len(test_triples))
 
-    #test
-    # for triple in test_triples:
-    #   print(triple[0], " ", triple[1], " ", triple[2])
+    # All true triples
     all_true_triples = train_triples + valid_triples + test_triples
 
     kge_model = KGEModel(
@@ -204,6 +222,7 @@ def main(args):
         kge_model = kge_model.cuda()
 
     if args.do_train:
+        # Set training dataloader iterator
         train_dataloader_head = DataLoader(
             TrainDataset(train_triples,
                          nentity,
@@ -238,17 +257,15 @@ def main(args):
 
         # Set training configuration
         current_learning_rate = args.learning_rate
-
         optimizer = torch.optim.Adam(
             filter(lambda p: p.requires_grad, kge_model.parameters()),
             lr=current_learning_rate
         )
-
         if args.warm_up_steps:
             warm_up_steps = args.warm_up_steps
         else:
             warm_up_steps = args.max_steps // 2
-            
+
     if args.init_checkpoint:
         # Restore model from checkpoint directory
         logging.info('Loading checkpoint %s...' % args.init_checkpoint)
@@ -284,9 +301,9 @@ def main(args):
 
         training_logs = []
 
-        # training Loop
+        # Training Loop
         for step in range(init_step, args.max_steps):
-            
+
             log = kge_model.train_step(kge_model, optimizer, train_iterator, args)
 
             training_logs.append(log)
@@ -314,7 +331,7 @@ def main(args):
                     metrics[metric] = sum([log[metric] for log in training_logs])/len(training_logs)
                 log_metrics('Training average', step, metrics)
                 training_logs = []
-            
+
             if args.do_valid and step % args.valid_steps == 0:
                 logging.info('Evaluating on Valid Dataset...')
                 metrics = kge_model.test_step(kge_model, valid_triples, all_true_triples, args)
@@ -326,7 +343,7 @@ def main(args):
             'warm_up_steps': warm_up_steps
         }
         save_model(kge_model, optimizer, save_variable_list, args)
-    
+
     if args.do_valid:
         logging.info('Evaluating on Valid Dataset...')
         metrics = kge_model.test_step(kge_model, valid_triples, all_true_triples, args)
@@ -342,18 +359,6 @@ def main(args):
         metrics = kge_model.test_step(kge_model, train_triples, all_true_triples, args)
         log_metrics('Test', step, metrics)
 
-if __name__ == "__main__":
-    main(parse_args())
-    # li = [i for i in range(10)]
-    # def iter(list):
-    #     while True:
-    #         for i in list:
-    #             yield i
-    # build a generator
-    # dataloader = iter(li)
-    # for i in dataloader:
-    #     print(i)
 
-    # while True:
-    #     print(next(dataloader))
-    print(os.getcwd())
+if __name__ == '__main__':
+    main(parse_args())

@@ -5,26 +5,27 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+
 from dataloader import TestDataset
+
 
 class KGEModel(nn.Module):
     def __init__(self, model_name, nentity, nrelation, hidden_dim, gamma,
-                double_entity_embedding=False, double_ralation_embedding=False):
+                 double_entity_embedding=False, double_relation_embedding=False):
         super(KGEModel, self).__init__()
         self.model_name = model_name
         self.nentity = nentity
         self.nrelation = nrelation
         self.hidden_dim = hidden_dim
         self.epsilon = 2.0
-        
-        # loss function logsigmoid(gamma - score)
+    
         self.gamma = nn.Parameter(
             torch.Tensor([gamma]),
             requires_grad=False
         )
 
         self.embedding_range = nn.Parameter(
-            torch.Tensor([(self.gamma.item() + self.epsilon) / self.hidden_dim]),
+            torch.Tensor([(self.gamma.item() + self.epsilon) / hidden_dim]),
             requires_grad=False
         )
 
@@ -34,46 +35,45 @@ class KGEModel(nn.Module):
         self.entity_embedding = nn.Parameter(torch.zeros(nentity, self.entity_dim))
         nn.init.uniform_(
             tensor=self.entity_embedding,
-            a= -self.embedding_range.item(),
+            a=-self.embedding_range.item(),
             b=self.embedding_range.item()
         )
 
-        self.relation_embedding = nn.Parameter(torc.zeros(nrelation, self.relation_dim))
+        self.relation_embedding = nn.Parameter(torch.zeros(nrelation, self.relation_dim))
         nn.init.uniform_(
-            tensor=self.relation_embbeding,
-            a= -self.embedding_range.item(),
+            tensor=self.relation_embedding,
+            a=-self.embedding_range.item(),
             b=self.embedding_range.item()
         )
 
-        # projection matrix 
-        # to get the projection on the hyperplane, e * proj_e * proj_r
         if model_name == 'TransD':
             self.proj_entity_embedding = nn.Parameter(torch.zeros(nentity, self.entity_dim))
             nn.init.uniform_(
-                tensor=proj_entity_embedding,
-                a= -self.embedding_range.item(),
+                tensor=self.proj_entity_embedding,
+                a=-self.embedding_range.item(),
                 b=self.embedding_range.item()
             )
 
             self.proj_relation_embedding = nn.Parameter(torch.zeros(nrelation, self.relation_dim))
             nn.init.uniform_(
-                tensor=self.proj_entity_embedding,
-                a= -self.embedding_range.item(),
+                tensor=self.proj_relation_embedding,
+                a=-self.embedding_range.item(),
                 b=self.embedding_range.item()
             )
 
         if model_name == 'pRotatE':
             self.modulus = nn.Parameter(torch.Tensor([[0.5 * self.embedding_range.item()]]))
-        
+
+        # Do not forget to modify this line when you add a new model in the "forward" function
         if model_name not in ['TransE', 'DistMult', 'ComplEx', 'RotatE', 'pRotatE', 'TransD']:
-            raise ValueError('model {} not supported'.format(model_name))
+            raise ValueError('model %s not supported' % model_name)
 
         if model_name == 'RotatE' and (not double_entity_embedding or double_relation_embedding):
-            raise ValueError('RotatE should use -- double_entity_embedding')
+            raise ValueError('RotatE should use --double_entity_embedding')
 
-        if model_name == 'ComplEx' and (not double_entity_embedding or not double_ralation_embedding):
-            raise ValueError('ComplEx should use --double_entity_embedding and --double_relation_')
-    
+        if model_name == 'ComplEx' and (not double_entity_embedding or not double_relation_embedding):
+            raise ValueError('ComplEx should use --double_entity_embedding and --double_relation_embedding')
+
     def forward(self, sample, mode='single'):
         '''
         Forward function that calculate the score of a batch of triples.
@@ -84,17 +84,16 @@ class KGEModel(nn.Module):
         Because negative samples and positive samples usually share two elements 
         in their triple ((head, relation) or (relation, tail)).
         '''
-        if model == 'single':
-            # sample.size() = (batch,3) [:,0] head采样, [:,1] relation采样 [:,2] tail
+
+        if mode == 'single':
             batch_size, negative_sample_size = sample.size(0), 1
-            # head.size() = (sample_size, 1,entity_dim) 
+
             head = torch.index_select(
-                self.entity_embedding,  # (nentity, entity_dim)
+                self.entity_embedding,
                 dim=0,
                 index=sample[:, 0]
             ).unsqueeze(1)
 
-            # relation.size() = (sample_size, 1, relation_dim)
             relation = torch.index_select(
                 self.relation_embedding,
                 dim=0,
@@ -104,19 +103,16 @@ class KGEModel(nn.Module):
             tail = torch.index_select(
                 self.entity_embedding,
                 dim=0,
-                index=sample[:2]
+                index=sample[:, 2]
             ).unsqueeze(1)
 
-            if hasattr(self, 'proj_relation_embedding') and hasattr(self, 'proj_entity_embedding'):
-                '''
-                calculate the TransD
-                '''
+            if hasattr(self, 'proj_entity_embedding') and hasattr(self, 'proj_relation_embedding'):
                 head_t = torch.index_select(
                     self.proj_entity_embedding,
                     dim=0,
                     index=sample[:, 0]
                 ).view(batch_size, negative_sample_size, -1)
-                
+
                 relation_t = torch.index_select(
                     self.proj_relation_embedding,
                     dim=0,
@@ -124,19 +120,16 @@ class KGEModel(nn.Module):
                 ).unsqueeze(1)
 
                 tail_t = torch.index_select(
-                    self.proj_relation_embedding,
+                    self.proj_entity_embedding,
                     dim=0,
                     index=sample[:, 2]
                 ).unsqueeze(1)
-
             else:
                 head_t = None
                 relation_t = None
                 tail_t = None
-                           
+
         elif mode == 'head-batch':
-            # tail_part contains  (truehead, relation, tail)
-            # while head_part only contains the negative head
             tail_part, head_part = sample
             batch_size, negative_sample_size = head_part.size(0), head_part.size(1)
 
@@ -145,7 +138,7 @@ class KGEModel(nn.Module):
                 dim=0,
                 index=head_part.view(-1)
             ).view(batch_size, negative_sample_size, -1)
-            
+
             relation = torch.index_select(
                 self.relation_embedding,
                 dim=0,
@@ -182,11 +175,9 @@ class KGEModel(nn.Module):
                 tail_t = None
 
         elif mode == 'tail-batch':
-            # head_part = (head, relation, true_tail)
-            # tail_part = negative_tail.indice
             head_part, tail_part = sample
             batch_size, negative_sample_size = tail_part.size(0), tail_part.size(1)
-            
+
             head = torch.index_select(
                 self.entity_embedding,
                 dim=0,
@@ -227,10 +218,10 @@ class KGEModel(nn.Module):
                 head_t = None
                 relation_t = None
                 tail_t = None
-            
+
         else:
-            raise ValueError(f'mode {mode} not supported')
-        
+            raise ValueError('mode %s not supported' % mode)
+
         model_func = {
             'TransE': self.TransE,
             'TransD': self.TransD,
@@ -241,43 +232,25 @@ class KGEModel(nn.Module):
         }
 
         if self.model_name in model_func:
-            score = model_func[self.model_name](head, relation, tail, head_t, relation_t, tail_t, model)
+            score = model_func[self.model_name](head, relation, tail, head_t, tail_t, relation_t, mode)
         else:
-            raise ValueError(f'model {self.model_name} not supported')
+            raise ValueError('model %s not supported' % self.model_name)
 
         return score
 
-    def TransE(self, head, relation, tail, head_t, relation_t, tail_t, mode):
-        '''
-        math:
-            score = ||head + relation - tail||1  
-            loss = gamma - ||score||1   
-        '''
-        # propogation mechanism
+    def TransE(self, head, relation, tail, head_t, tail_t, relation_t, mode):
         if mode == 'head-batch':
-            # head.size = (batch, NS_size, -1)
-            # (relation - tail).size = int 
             score = head + (relation - tail)
         else:
             score = (head + relation) - tail
 
-        # gamma - N2 of score(dim 2 means the ) 
-        # score.size()
         score = self.gamma.item() - torch.norm(score, p=1, dim=2)
         return score
 
-    # calculate the projection vector
     def _transfer(self, e, e_t, r_t):
         return F.normalize(e + (e * e_t).sum(dim=1, keepdim=True) * r_t, 2, -1)
-    
-    def TransD(self, head, relation, tail, head_t, relation_t, tail_t, mode):
-        '''
-        math:
-            score = ||head_proj, relation, tail_proj||1   
-            head_t and relation_t are one column of projection matrix
-            imply to show there are 2 different projection way for different entity and relation
-            which related to self.proj_entity_embedding and self.proj_relation_embedding 
-        '''
+
+    def TransD(self, head, relation, tail, head_t, tail_t, relation_t, mode):
         head_proj = self._transfer(head, head_t, relation_t)
         tail_proj = self._transfer(tail, tail_t, relation_t)
 
@@ -285,15 +258,11 @@ class KGEModel(nn.Module):
             score = head_proj + (relation - tail_proj)
         else:
             score = (head_proj + relation) - tail_proj
-        
+
         score = self.gamma.item() - torch.norm(score, p=1, dim=2)
         return score
-        
-    def DistMult(self, head, relation, tail, head_t, relation_t, tail_t, mode):
-        '''
-        math:
-            score = <head, relation, tail>        
-        '''
+
+    def DistMult(self, head, relation, tail, head_t, tail_t, relation_t, mode):
         if mode == 'head-batch':
             score = head * (relation * tail)
         else:
@@ -301,17 +270,8 @@ class KGEModel(nn.Module):
 
         score = score.sum(dim=2)
         return score
-    
-    def ComplEx(self, head, relation, tail, head_t, relation_t, tail_t, mode):
-        '''
-        Re(<h, r, t`>)
-        =   <Re(h), Re(r), Re(t)> 
-            + <Re(h), Im(r), Im(t)>
-            + <Im(h), Re(r), Im(t)>
-            - <Im(h), Im(r), Re(t)>
-        = (Re(h), Im(h)) * (Re<r, -t> + Im<r, -t>)
-        = (Re(t), Im(t)) * (Re<h, r> + Im<h, r>)
-        '''
+
+    def ComplEx(self, head, relation, tail, head_t, tail_t, relation_t, mode):
         re_head, im_head = torch.chunk(head, 2, dim=2)
         re_relation, im_relation = torch.chunk(relation, 2, dim=2)
         re_tail, im_tail = torch.chunk(tail, 2, dim=2)
@@ -323,25 +283,21 @@ class KGEModel(nn.Module):
         else:
             re_score = re_head * re_relation - im_head * im_relation
             im_score = re_head * im_relation + im_head * re_relation
-            score = re_tail * re_score + im_tail * im_score
-        
+            score = re_score * re_tail + im_score * im_tail
+
         score = score.sum(dim=2)
         return score
 
-
-    def RotatE(self, head, relation, tail, head_t, relation_t, tail_t, mode):
-        '''
-        Complex domain
-        score = ||h o r - t||2  where |r| = 1
-        '''
+    def RotatE(self, head, relation, tail, head_t, tail_t, relation_t, mode):
         pi = 3.14159265358979323846
 
         re_head, im_head = torch.chunk(head, 2, dim=2)
         re_tail, im_tail = torch.chunk(tail, 2, dim=2)
 
-        # scale into range (-pi, pi]
-        phase_relation =  (relation / self.embedding_range().item() * pi)
-        
+        # Make phases of relations uniformly distributed in [-pi, pi]
+
+        phase_relation = relation / (self.embedding_range.item() / pi)
+
         re_relation = torch.cos(phase_relation)
         im_relation = torch.sin(phase_relation)
 
@@ -351,10 +307,10 @@ class KGEModel(nn.Module):
             re_score = re_score - re_head
             im_score = im_score - im_head
         else:
-            re_score = re_relation * re_head + im_relation * im_head
-            im_score = re_head * im_relation - im_head * re_relation
+            re_score = re_head * re_relation - im_head * im_relation
+            im_score = re_head * im_relation + im_head * re_relation
             re_score = re_score - re_tail
-            im_score = im_score - im_tail 
+            im_score = im_score - im_tail
 
         score = torch.stack([re_score, im_score], dim=0)
         score = score.norm(dim=0)
@@ -362,9 +318,10 @@ class KGEModel(nn.Module):
         score = self.gamma.item() - score.sum(dim=2)
         return score
 
-    # todo
-    def pRotatE(self, head, relation, tail, head_t, relation_t, tail_t, mode):
+    def pRotatE(self, head, relation, tail, head_t, tail_t, relation_t, mode):
         pi = 3.14159262358979323846
+
+        # Make phases of entities and relations uniformly distributed in [-pi, pi]
 
         phase_head = head / (self.embedding_range.item() / pi)
         phase_relation = relation / (self.embedding_range.item() / pi)
@@ -383,18 +340,14 @@ class KGEModel(nn.Module):
 
     @staticmethod
     def train_step(model, optimizer, train_iterator, args):
-        ''' 
-        A single train step, apply back_propagation and return the loss
+        '''
+        A single train step. Apply back-propation and return the loss
         '''
 
-        # model(sample, model) = forward(sample, model)
-        
         model.train()
 
-        optimizer.zeros_grad()
-        
-        #  positive_sample, negative_sample size()?
-        # 在这个地方放入KGE信息 
+        optimizer.zero_grad()
+
         positive_sample, negative_sample, subsampling_weight, mode = next(train_iterator)
 
         if args.cuda:
@@ -402,37 +355,33 @@ class KGEModel(nn.Module):
             negative_sample = negative_sample.cuda()
             subsampling_weight = subsampling_weight.cuda()
 
-        # negative sample size
         negative_score = model((positive_sample, negative_sample), mode=mode)
 
-        # adv_RW
-        # Loss = positive_score + adv * negative_score
         if args.negative_adversarial_sampling:
+            # In self-adversarial sampling, we do not apply back-propagation on the sampling weight
             negative_score = (F.softmax(negative_score * args.adversarial_temperature, dim=1).detach()
-                * F.logsigmoid(-negative_score)).sum(dim=1)
-
+                              * F.logsigmoid(-negative_score)).sum(dim=1)
         else:
             negative_score = F.logsigmoid(-negative_score).mean(dim=1)
 
-        # single mode calculate positive_score
-        positive_score = model(positive_sample)   
+        positive_score = model(positive_sample)
 
         positive_score = F.logsigmoid(positive_score).squeeze(dim=1)
 
         if args.uni_weight:
-            positive_sample_loss = -positive_score.mean()
-            negative_sample_loss = -negative_score.mean()
+            positive_sample_loss = - positive_score.mean()
+            negative_sample_loss = - negative_score.mean()
         else:
-            positive_sample_loss = -(subsampling_weight * positive_score).sum() / subsampling_weight.sum()
-            negative_sample_loss = -(subsampling_weight * negative_score).sum() / subsampling_weight.sum()
+            positive_sample_loss = - (subsampling_weight * positive_score).sum() / subsampling_weight.sum()
+            negative_sample_loss = - (subsampling_weight * negative_score).sum() / subsampling_weight.sum()
 
         loss = (positive_sample_loss + negative_sample_loss) / 2
-        
+
         if args.regularization != 0.0:
             # Use L3 regularization for ComplEx and DistMult
             regularization = args.regularization * (
                 model.entity_embedding.norm(p=3) ** 3 +
-                model.relation_embbeding.norm(p=3) ** 3
+                model.relation_embedding.norm(p=3).norm(p=3) ** 3
             )
             loss = loss + regularization
             regularization_log = {'regularization': regularization.item()}
@@ -452,15 +401,30 @@ class KGEModel(nn.Module):
 
         return log
 
-    # towriter
     @staticmethod
     def test_step(model, test_triples, all_true_triples, args):
         '''
-        evaluate the model on the test
+        Evaluate the model on test or valid datasets
         '''
+
         model.eval()
 
+        # Otherwise use standard (filtered) MRR, MR, HITS@1, HITS@3, and HITS@10 metrics
+        # Prepare dataloader for evaluation
         test_dataloader_head = DataLoader(
+            TestDataset(
+                test_triples,
+                all_true_triples,
+                args.nentity,
+                args.nrelation,
+                'head-batch'
+            ),
+            batch_size=args.test_batch_size,
+            num_workers=max(1, args.cpu_num // 2),
+            collate_fn=TestDataset.collate_fn
+        )
+
+        test_dataloader_tail = DataLoader(
             TestDataset(
                 test_triples,
                 all_true_triples,
@@ -475,38 +439,39 @@ class KGEModel(nn.Module):
 
         test_dataset_list = [test_dataloader_head, test_dataloader_tail]
 
-        log = []
+        logs = []
 
         step = 0
-        total_step = sum([len(dataset) for dataset in test_dataset_list])
+        total_steps = sum([len(dataset) for dataset in test_dataset_list])
 
         with torch.no_grad():
             for test_dataset in test_dataset_list:
-                for postive_sample, negative_sample, filter_bias, mode in test_daatset:
+                for positive_sample, negative_sample, filter_bias, mode in test_dataset:
                     if args.cuda:
-                        postive_sample = postive_sample.cuda()
+                        positive_sample = positive_sample.cuda()
                         negative_sample = negative_sample.cuda()
                         filter_bias = filter_bias.cuda()
 
-                    batch_size = postive_sample.size(0)
+                    batch_size = positive_sample.size(0)
 
-                    score = model((postive_sample, negative_sample), mode)
+                    score = model((positive_sample, negative_sample), mode)
                     score += filter_bias
 
+                    # Explicitly sort all the entities to ensure that there is no test exposure bias
                     argsort = torch.argsort(score, dim=1, descending=True)
 
                     if mode == 'head-batch':
                         positive_arg = positive_sample[:, 0]
-                    else mode == 'tail-batch':
+                    elif mode == 'tail-batch':
                         positive_arg = positive_sample[:, 2]
                     else:
                         raise ValueError('mode %s not supported' % mode)
 
                     for i in range(batch_size):
-                        ranking = (argsort[i,:] == postive_arg[i]).nonzero()
-                        
+                        # Notice that argsort is not ranking
+                        ranking = (argsort[i, :] == positive_arg[i]).nonzero()
                         assert ranking.size(0) == 1
-                        
+
                         # ranking + 1 is the true ranking used in evaluation metrics
                         ranking = 1 + ranking.item()
                         logs.append({
@@ -516,10 +481,10 @@ class KGEModel(nn.Module):
                             'HITS@3': 1.0 if ranking <= 3 else 0.0,
                             'HITS@10': 1.0 if ranking <= 10 else 0.0,
                         })
-                    
+
                     if step % args.test_log_steps == 0:
                         logging.info('Evaluating the model... (%d/%d)' % (step, total_steps))
-                    
+
                     step += 1
 
         metrics = {}
@@ -527,24 +492,3 @@ class KGEModel(nn.Module):
             metrics[metric] = sum([log[metric] for log in logs]) / len(logs)
 
         return metrics
-
-
-
-def main():
-    # sample = torch.randint(0, 10, size=(4, 3)).long()
-    # print(sample)
-    # a = torch.randn(10, 4)
-    # print(a)
-    # b = torch.index_select(
-    #     input=a,
-    #     dim=0,
-    #     index=sample[:,0]
-    # ).unsqueeze(1)
-    # print(b.size())
-
-    sample = torch.ones(3, 4)
-    sample = sample.view(-1)
-    print(sample)
-
-if __name__ == "__main__":
-    main()
