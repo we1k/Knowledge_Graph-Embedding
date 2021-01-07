@@ -65,14 +65,46 @@ def override_config(args):
     '''
     Override model and data configuration
     '''
-    pass
+
+    with open(os.path.join(args.init_checkpoint, 'config.json'), 'r') as fjson:
+        argparse_dict = json.load(fjson)
+
+    if args.data_path is None:
+        args.data_path = argparse_dict['data_path']
+    args.model = argparse_dict['model']
+    args.double_entity_embedding = argparse_dict['double_entity_embedding']
+    args.double_relation_embedding = argparse_dict['double_relation_embedding']
+    args.hidden_dim = argparse_dict['hidden_dim']
+    args.test_batch_size = argparse_dict['test_batch_size']
 
 def save_model(model, optimizer, save_variable_list, args):
-    '''
+        '''
     Save the parameters of the model and the optimizer,
     as well as some other variables such as step and learning_rate
     '''
-    pass
+
+    argparse_dict = vars(args)
+    with open(os.path.join(args.save_path, 'config.json'), 'w') as fjson:
+        json.dump(argparse_dict, fjson)
+
+    torch.save({
+        **save_variable_list,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict()},
+        os.path.join(args.save_path, 'checkpoint')
+    )
+
+    entity_embedding = model.entity_embedding.detach().cpu().numpy()
+    np.save(
+        os.path.join(args.save_path, 'entity_embedding'),
+        entity_embedding
+    )
+
+    relation_embedding = model.relation_embedding.detach().cpu().numpy()
+    np.save(
+        os.path.join(args.save_path, 'relation_embedding'),
+        relation_embedding
+    )
 
 def read_triple(file_path, entity2id, relation2id):
     triples = []
@@ -88,9 +120,9 @@ def set_logger(args):
     '''
 
     if args.do_train:
-        log_file = os.path.join(arg.save_path or args.init_checkpoint, 'train.log')
+        log_file = os.path.join(args.save_path or args.init_checkpoint, 'train.log')
     else:
-        log_file = os.path.join(arg.save_path or args.init_checkpoint, 'test.log')
+        log_file = os.path.join(args.save_path or args.init_checkpoint, 'test.log')
     
     logging.basicConfig(
         format='%(asctime)s %(levelname)-8s %(message)s',
@@ -193,7 +225,7 @@ def main(args):
                          dsn=args.data_path),
             batch_size=args.batch_size,
             shuffle=True,
-            num_workers=max(1. args.cpu_num//2),
+            # num_workers=max(1, args.cpu_num//2),
             collate_fn=TrainDataset.collate_fn
         )
 
@@ -208,7 +240,7 @@ def main(args):
                          dsn=args.data_path),
             batch_size=args.batch_size,
             shuffle=True,
-            num_workers=max(1, args.cpu_num//2),
+            # num_workers=max(1, args.cpu_num//2),
             collate_fn=TrainDataset.collate_fn
         )
 
@@ -279,7 +311,7 @@ def main(args):
                 warm_up_steps = warm_up_steps * 3
 
             if step % args.save_checkpoint_steps == 0:
-                                save_variable_list = {
+                save_variable_list = {
                     'step': step,
                     'current_learning_rate': current_learning_rate,
                     'warm_up_steps': warm_up_steps
