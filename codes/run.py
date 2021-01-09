@@ -51,6 +51,7 @@ def parse_args(args=None):
     parser.add_argument('--max_steps', default=100000, type=int)
     parser.add_argument('--warm_up_steps', default=None, type=int)
 
+    parser.add_argument('--changing_weight', default=5000, type=int)
     parser.add_argument('--save_checkpoint_steps', default=10000, type=int)
     parser.add_argument('--valid_steps', default=10000, type=int)
     parser.add_argument('--log_steps', default=100, type=int, help='train log every xx steps')
@@ -152,6 +153,41 @@ def log_metrics(mode, step, metrics):
     for metric in metrics:
         logging.info('%s %s at step %d: %f' % (mode, metric, step, metrics[metric]))
 
+def build_train_iterator(train_triples, model, args):
+    '''
+    Build a new training dataloader iterator
+    '''
+    train_dataloader_head = DataLoader(
+        TrainDataset(train_triples,
+                     model,
+                     args.negative_sample_size,
+                     'head-batch',
+                     args.negative_k_hop_sampling,
+                     args.negative_n_random_walks,
+                     dsn=args.data_path),
+        batch_size=args.batch_size,
+        shuffle=True,
+        # todo: worker_num ?
+        # num_workers=max(1, args.cpu_num//2),
+        collate_fn=TrainDataset.collate_fn
+    )
+
+    train_dataloader_tail = DataLoader(
+        TrainDataset(train_triples,
+                    model,
+                    args.negative_sample_size,
+                    'tail-batch',
+                    args.negative_k_hop_sampling,
+                    args.negative_n_random_walks,
+                    dsn=args.data_path),
+        batch_size=args.batch_size,
+        shuffle=True,
+        # num_workers=max(1, args.cpu_num//2),
+        collate_fn=TrainDataset.collate_fn
+    )
+
+    train_iterator = BidirectionalOneShotIterator(train_dataloader_head, train_dataloader_tail)
+    return train_iterator
 
 def main(args):
     if (not args.do_train) and (not args.do_valid) and (not args.do_test):
@@ -216,9 +252,6 @@ def main(args):
     # todo
     # need to expand_dim a,b,c
     # in form of (batch_size, negative_sample_size, embedding_dim)
-
-    # [(1, 2, 2)] list
-    # todo: test delete this
     tri1 = all_true_triples[0]
     tri1 = torch.LongTensor(tri1)
     head, relation, tail= tri1[0], tri1[1], tri1[2]
@@ -229,7 +262,6 @@ def main(args):
         index=head
     ).unsqueeze(1)
 
-    print(head.size())
     tail = torch.index_select(
         kge_model.entity_embedding,
         dim=0,
@@ -240,11 +272,7 @@ def main(args):
         dim=0,
         index=relation
     ).unsqueeze(1)
-
-    # a = kge_model.entity_embedding[0].unsqueeze(0).unsqueeze(0)
-    # b = kge_model.entity_embedding[1].unsqueeze(0).unsqueeze(0)
-    # c = kge_model.relation_embedding[0].unsqueeze(0).unsqueeze(0)
-
+    
     Dataset = TrainDataset(train_triples,
                          kge_model,
                          args.negative_sample_size,
@@ -252,12 +280,8 @@ def main(args):
                          args.negative_k_hop_sampling,
                          args.negative_n_random_walks,
                          dsn=args.data_path)
-    # <class 'scipy.sparse.csr.csr_matrix'>
-    # print(Dataset.k_neighbors)
-    print(Dataset.model.TransE(head, relation, tail, 'single'))
     print('the TransE score of ...')
     print(Dataset.nentity)
-    # return
 
 
     logging.info('Model Parameter Configuration:')
@@ -269,35 +293,8 @@ def main(args):
 
     if args.do_train:
         # Set training dataloader iterator
-        train_dataloader_head = DataLoader(
-            TrainDataset(train_triples,
-                         kge_model,
-                         args.negative_sample_size,
-                         'head-batch',
-                         args.negative_k_hop_sampling,
-                         args.negative_n_random_walks,
-                         dsn=args.data_path),
-            batch_size=args.batch_size,
-            shuffle=True,
-            # num_workers=max(1, args.cpu_num//2),
-            collate_fn=TrainDataset.collate_fn
-        )
 
-        train_dataloader_tail = DataLoader(
-            TrainDataset(train_triples,
-                         kge_model,
-                         args.negative_sample_size,
-                         'tail-batch',
-                         args.negative_k_hop_sampling,
-                         args.negative_n_random_walks,
-                         dsn=args.data_path),
-            batch_size=args.batch_size,
-            shuffle=True,
-            # num_workers=max(1, args.cpu_num//2),
-            collate_fn=TrainDataset.collate_fn
-        )
-
-        train_iterator = BidirectionalOneShotIterator(train_dataloader_head, train_dataloader_tail)
+        train_iterator = build_train_iterator(train_triples, kge_model, args)
 
         # Set training configuration
         current_learning_rate = args.learning_rate
@@ -347,7 +344,7 @@ def main(args):
 
         # Training Loop
         for step in range(init_step, args.max_steps):
-
+            
             log = kge_model.train_step(kge_model, optimizer, train_iterator, args)
 
             training_logs.append(log)
@@ -368,6 +365,12 @@ def main(args):
                     'warm_up_steps': warm_up_steps
                 }
                 save_model(kge_model, optimizer, save_variable_list, args)
+
+            if step % args.changing_weight == 0:
+                logging.info('Resampling with new weight')
+                train_iterator = build_train_iterator(train_triples, kge_model, args)
+                # todo: check if there are any bug
+
 
             if step % args.log_steps == 0:
                 metrics = {}
