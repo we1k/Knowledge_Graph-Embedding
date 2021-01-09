@@ -213,6 +213,52 @@ def main(args):
         double_entity_embedding=args.double_entity_embedding,
         double_relation_embedding=args.double_relation_embedding
     )
+    # todo
+    # need to expand_dim a,b,c
+    # in form of (batch_size, negative_sample_size, embedding_dim)
+
+    # [(1, 2, 2)] list
+    # todo: test delete this
+    tri1 = all_true_triples[0]
+    tri1 = torch.LongTensor(tri1)
+    head, relation, tail= tri1[0], tri1[1], tri1[2]
+
+    head = torch.index_select(
+        kge_model.entity_embedding,
+        dim=0,
+        index=head
+    ).unsqueeze(1)
+
+    print(head.size())
+    tail = torch.index_select(
+        kge_model.entity_embedding,
+        dim=0,
+        index=tail
+    ).unsqueeze(1)
+    relation = torch.index_select(
+        kge_model.relation_embedding,
+        dim=0,
+        index=relation
+    ).unsqueeze(1)
+
+    # a = kge_model.entity_embedding[0].unsqueeze(0).unsqueeze(0)
+    # b = kge_model.entity_embedding[1].unsqueeze(0).unsqueeze(0)
+    # c = kge_model.relation_embedding[0].unsqueeze(0).unsqueeze(0)
+
+    Dataset = TrainDataset(train_triples,
+                         kge_model,
+                         args.negative_sample_size,
+                         'head-batch',
+                         args.negative_k_hop_sampling,
+                         args.negative_n_random_walks,
+                         dsn=args.data_path)
+    # <class 'scipy.sparse.csr.csr_matrix'>
+    # print(Dataset.k_neighbors)
+    print(Dataset.model.TransE(head, relation, tail, 'single'))
+    print('the TransE score of ...')
+    print(Dataset.nentity)
+    # return
+
 
     logging.info('Model Parameter Configuration:')
     for name, param in kge_model.named_parameters():
@@ -225,8 +271,7 @@ def main(args):
         # Set training dataloader iterator
         train_dataloader_head = DataLoader(
             TrainDataset(train_triples,
-                         nentity,
-                         nrelation,
+                         kge_model,
                          args.negative_sample_size,
                          'head-batch',
                          args.negative_k_hop_sampling,
@@ -240,8 +285,7 @@ def main(args):
 
         train_dataloader_tail = DataLoader(
             TrainDataset(train_triples,
-                         nentity,
-                         nrelation,
+                         kge_model,
                          args.negative_sample_size,
                          'tail-batch',
                          args.negative_k_hop_sampling,
@@ -333,7 +377,7 @@ def main(args):
                 training_logs = []
 
             if args.do_valid and step % args.valid_steps == 0:
-                logging.info('Evaluating on Valid Dataset...')
+                logging.info('Evaluating on Valid Da·taset...')
                 metrics = kge_model.test_step(kge_model, valid_triples, all_true_triples, args)
                 log_metrics('Valid', step, metrics)
 

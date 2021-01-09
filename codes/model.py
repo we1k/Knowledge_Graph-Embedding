@@ -46,26 +46,11 @@ class KGEModel(nn.Module):
             b=self.embedding_range.item()
         )
 
-        if model_name == 'TransD':
-            self.proj_entity_embedding = nn.Parameter(torch.zeros(nentity, self.entity_dim))
-            nn.init.uniform_(
-                tensor=self.proj_entity_embedding,
-                a=-self.embedding_range.item(),
-                b=self.embedding_range.item()
-            )
-
-            self.proj_relation_embedding = nn.Parameter(torch.zeros(nrelation, self.relation_dim))
-            nn.init.uniform_(
-                tensor=self.proj_relation_embedding,
-                a=-self.embedding_range.item(),
-                b=self.embedding_range.item()
-            )
-
         if model_name == 'pRotatE':
             self.modulus = nn.Parameter(torch.Tensor([[0.5 * self.embedding_range.item()]]))
 
         # Do not forget to modify this line when you add a new model in the "forward" function
-        if model_name not in ['TransE', 'DistMult', 'ComplEx', 'RotatE', 'pRotatE', 'TransD']:
+        if model_name not in ['TransE', 'DistMult', 'ComplEx', 'RotatE', 'pRotatE']:
             raise ValueError('model %s not supported' % model_name)
 
         if model_name == 'RotatE' and (not double_entity_embedding or double_relation_embedding):
@@ -84,7 +69,8 @@ class KGEModel(nn.Module):
         Because negative samples and positive samples usually share two elements 
         in their triple ((head, relation) or (relation, tail)).
         '''
-
+        # sample = (tensor([[1, 2, 2]], device='cuda:0'), tensor([[1, 1]], device='cuda:0'))
+        # head-batch, true triples and head negative sample for each...
         if mode == 'single':
             batch_size, negative_sample_size = sample.size(0), 1
 
@@ -105,29 +91,6 @@ class KGEModel(nn.Module):
                 dim=0,
                 index=sample[:, 2]
             ).unsqueeze(1)
-
-            if hasattr(self, 'proj_entity_embedding') and hasattr(self, 'proj_relation_embedding'):
-                head_t = torch.index_select(
-                    self.proj_entity_embedding,
-                    dim=0,
-                    index=sample[:, 0]
-                ).view(batch_size, negative_sample_size, -1)
-
-                relation_t = torch.index_select(
-                    self.proj_relation_embedding,
-                    dim=0,
-                    index=sample[:, 1]
-                ).unsqueeze(1)
-
-                tail_t = torch.index_select(
-                    self.proj_entity_embedding,
-                    dim=0,
-                    index=sample[:, 2]
-                ).unsqueeze(1)
-            else:
-                head_t = None
-                relation_t = None
-                tail_t = None
 
         elif mode == 'head-batch':
             tail_part, head_part = sample
@@ -151,28 +114,6 @@ class KGEModel(nn.Module):
                 index=tail_part[:, 2]
             ).unsqueeze(1)
 
-            if hasattr(self, 'proj_entity_embedding') and hasattr(self, 'proj_relation_embedding'):
-                head_t = torch.index_select(
-                    self.proj_entity_embedding,
-                    dim=0,
-                    index=head_part.view(-1)
-                ).view(batch_size, negative_sample_size, -1)
-
-                relation_t = torch.index_select(
-                    self.proj_relation_embedding,
-                    dim=0,
-                    index=tail_part[:, 1]
-                ).unsqueeze(1)
-
-                tail_t = torch.index_select(
-                    self.proj_entity_embedding,
-                    dim=0,
-                    index=tail_part[:, 2]
-                ).unsqueeze(1)
-            else:
-                head_t = None
-                relation_t = None
-                tail_t = None
 
         elif mode == 'tail-batch':
             head_part, tail_part = sample
@@ -196,35 +137,11 @@ class KGEModel(nn.Module):
                 index=tail_part.view(-1)
             ).view(batch_size, negative_sample_size, -1)
 
-            if hasattr(self, 'proj_entity_embedding') and hasattr(self, 'proj_relation_embedding'):
-                head_t = torch.index_select(
-                    self.proj_entity_embedding,
-                    dim=0,
-                    index=head_part[:, 0]
-                ).unsqueeze(1)
-
-                relation_t = torch.index_select(
-                    self.proj_relation_embedding,
-                    dim=0,
-                    index=head_part[:, 1]
-                ).unsqueeze(1)
-
-                tail_t = torch.index_select(
-                    self.proj_entity_embedding,
-                    dim=0,
-                    index=tail_part.view(-1)
-                ).view(batch_size, negative_sample_size, -1)
-            else:
-                head_t = None
-                relation_t = None
-                tail_t = None
-
         else:
             raise ValueError('mode %s not supported' % mode)
 
         model_func = {
             'TransE': self.TransE,
-            'TransD': self.TransD,
             'DistMult': self.DistMult,
             'ComplEx': self.ComplEx,
             'RotatE': self.RotatE,
@@ -232,37 +149,26 @@ class KGEModel(nn.Module):
         }
 
         if self.model_name in model_func:
-            score = model_func[self.model_name](head, relation, tail, head_t, tail_t, relation_t, mode)
+            score = model_func[self.model_name](head, relation, tail, mode)
         else:
             raise ValueError('model %s not supported' % self.model_name)
 
         return score
 
-    def TransE(self, head, relation, tail, head_t, tail_t, relation_t, mode):
+    def TransE(self, head, relation, tail, mode):
         if mode == 'head-batch':
             score = head + (relation - tail)
         else:
             score = (head + relation) - tail
 
+        '''
+        torch.Size([1, 2, 10]) torch.Size([1, 1, 10]) torch.Size([1, 1, 10])
+        '''
+        # print(head.size(), relation.size(), tail.size())
         score = self.gamma.item() - torch.norm(score, p=1, dim=2)
         return score
 
-    def _transfer(self, e, e_t, r_t):
-        return F.normalize(e + (e * e_t).sum(dim=1, keepdim=True) * r_t, 2, -1)
-
-    def TransD(self, head, relation, tail, head_t, tail_t, relation_t, mode):
-        head_proj = self._transfer(head, head_t, relation_t)
-        tail_proj = self._transfer(tail, tail_t, relation_t)
-
-        if mode == 'head-batch':
-            score = head_proj + (relation - tail_proj)
-        else:
-            score = (head_proj + relation) - tail_proj
-
-        score = self.gamma.item() - torch.norm(score, p=1, dim=2)
-        return score
-
-    def DistMult(self, head, relation, tail, head_t, tail_t, relation_t, mode):
+    def DistMult(self, head, relation, tail, mode):
         if mode == 'head-batch':
             score = head * (relation * tail)
         else:
@@ -271,7 +177,7 @@ class KGEModel(nn.Module):
         score = score.sum(dim=2)
         return score
 
-    def ComplEx(self, head, relation, tail, head_t, tail_t, relation_t, mode):
+    def ComplEx(self, head, relation, tail, mode):
         re_head, im_head = torch.chunk(head, 2, dim=2)
         re_relation, im_relation = torch.chunk(relation, 2, dim=2)
         re_tail, im_tail = torch.chunk(tail, 2, dim=2)
@@ -288,7 +194,7 @@ class KGEModel(nn.Module):
         score = score.sum(dim=2)
         return score
 
-    def RotatE(self, head, relation, tail, head_t, tail_t, relation_t, mode):
+    def RotatE(self, head, relation, tail, mode):
         pi = 3.14159265358979323846
 
         re_head, im_head = torch.chunk(head, 2, dim=2)
@@ -318,7 +224,7 @@ class KGEModel(nn.Module):
         score = self.gamma.item() - score.sum(dim=2)
         return score
 
-    def pRotatE(self, head, relation, tail, head_t, tail_t, relation_t, mode):
+    def pRotatE(self, head, relation, tail, mode):
         pi = 3.14159262358979323846
 
         # Make phases of entities and relations uniformly distributed in [-pi, pi]

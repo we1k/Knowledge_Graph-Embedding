@@ -4,6 +4,8 @@ import time
 
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from scipy import sparse
 from torch.utils.data import Dataset
 
@@ -21,33 +23,40 @@ def time_it(fn):
 
 class TrainDataset(Dataset):
 
-    def _get_adj_mat(self):
+    def _get_adj_mat(self, dataset_name):
+
+        a_save_path = f'cached_matrices/matrix_{dataset_name}_a.npz'
+        r_save_path = f'cached_matrices/matrix_{dataset_name}_r.npz'
+
+        if os.path.exists(a_save_path) and os.path.exists(a_save_path):
+            logging.info(f'Using cached matrix')
+            a_mat = sparse.load_npz(a_save_path)
+            r_mat = sparse.load_npz(r_save_path)
+            return a_mat, r_mat
+
         a_mat = sparse.dok_matrix((self.nentity, self.nentity))
-        print(self.triples)
-        for (h, _, t) in self.triples:
+        r_mat = sparse.dok_matrix((self.nentity, self.nrelation))
+        for (h, r, t) in self.triples:
             a_mat[t, h] = 1
             a_mat[h, t] = 1
+            r_mat[h, r] = 1
+            r_mat[t, r]= 1
 
         a_mat = a_mat.tocsr()
-        return a_mat
+        r_mat = r_mat.tocsr()
+        sparse.save_npz(a_save_path, a_mat)
+        sparse.save_npz(r_save_path, r_mat)
+        return a_mat, r_mat
+
 
     @time_it
     def build_k_hop(self, k_hop, dataset_name):
         if k_hop == 0:
             return None
 
-        save_path = f'cached_matrices/matrix_{dataset_name}_k{k_hop}_nrw0.npz'
-
-        if os.path.exists(save_path):
-            logging.info(f'Using cached matrix: {save_path}')
-            k_mat = sparse.load_npz(save_path)
-            return k_mat
-
-        _a_mat = self._get_adj_mat()
+        _a_mat, _r_mat = self._get_adj_mat(dataset_name)
         _k_mat = _a_mat ** (k_hop - 1)
         k_mat = _k_mat * _a_mat + _k_mat
-
-        sparse.save_npz(save_path, k_mat)
 
         return k_mat
 
@@ -60,6 +69,67 @@ class TrainDataset(Dataset):
         if n_rw == 0 or k_hop == 0:
             return None
 
+
+        # USING A MATRIX TO STORE THE RELATION
+        a_mat, r_mat = self._get_adj_mat(dataset_name)
+        k_mat = sparse.dok_matrix((self.nentity, self.nentity))
+
+        randomly_sampled = 0
+
+        model_func = {
+            'TransE': self.model.TransE,
+            'DistMult': self.model.DistMult,
+            'ComplEx': self.model.ComplEx,
+            'RotatE': self.model.RotatE,
+            'pRotatE': self.model.pRotatE
+        }
+
+        for i in range(0, self.nentity):
+            neighbors = a_mat[i]
+            relations = r_mat[i]
+            # todo: simplify the code -- too ugly
+            head = self.model.entity_embedding[i].unsqueeze(0).unsqueeze(0)
+            if len(neighbors.indices) == 0:
+                randomly_sampled += 1
+                walker = np.random.randint(self.nentity, size=n_rw)
+                k_mat[i, walker] = 1
+            else:
+                for _ in range(0, n_rw):
+                    walker = i
+                    for _ in range(0, k_hop):
+                        # todo:
+                        # for each relation: get the max
+                        # maybe we don't want calculate the weight every time
+                        weight = []
+                        for t_idx in neighbors.indices:
+                            score = []
+                            for r_idx in relations.indices:
+                                tail = self.model.entity_embedding[t_idx].unsqueeze(0).unsqueeze(0)
+                                relation = self.model.relation_embedding[r_idx].unsqueeze(0).unsqueeze(0)
+                                single_score = model_func[self.model.model_name](head, relation, tail, 'single')
+                                score.append(single_score.item())
+                                # print(single_score.item())
+                            weight.append(max(score))
+
+                        weight = F.softmax(torch.Tensor(weight), dim=0)
+                        idx = torch.argmax(weight)
+                        walker = neighbors.indices[idx]
+
+                        neighbors = a_mat[walker]
+                    k_mat[i, walker] += 1
+                    break
+        logging.info(f'randomly_sampled: {randomly_sampled}')
+        k_mat = k_mat.tocsr()
+
+        # sparse.save_npz(save_path, k_mat)
+
+        return k_mat
+
+    @time_it
+    def buil_weighted_k_rw(self, n_rw, k_hop, dataset_name):
+        if n_rw == 0 or k_hop == 0:
+            return None
+
         save_path = f'cached_matrices/matrix_{dataset_name}_k{k_hop}_nrw{n_rw}.npz'
 
         if os.path.exists(save_path):
@@ -67,7 +137,7 @@ class TrainDataset(Dataset):
             k_mat = sparse.load_npz(save_path)
             return k_mat
 
-        a_mat = self._get_adj_mat()
+        a_mat = self._get_adj_mat(dataset_name)
         k_mat = sparse.dok_matrix((self.nentity, self.nentity))
 
         randomly_sampled = 0
@@ -89,22 +159,23 @@ class TrainDataset(Dataset):
         logging.info(f'randomly_sampled: {randomly_sampled}')
         k_mat = k_mat.tocsr()
 
-        sparse.save_npz(save_path, k_mat)
+        # sparse.save_npz(save_path, k_mat)
 
         return k_mat
 
-    def __init__(self, triples, nentity, nrelation, negative_sample_size, mode, k_hop, n_rw, dsn):
+
+    def __init__(self, triples, model, negative_sample_size, mode, k_hop, n_rw, dsn):
         self.len = len(triples)
         self.triples = triples
         self.triple_set = set(triples)
-        self.nentity = nentity
-        self.nrelation = nrelation
+        self.model = model
+        self.nentity = self.model.nentity
+        self.nrelation = self.model.nrelation
         self.negative_sample_size = negative_sample_size
         self.mode = mode
         self.count = self.count_frequency(triples)
         self.true_head, self.true_tail = self.get_true_head_and_tail(self.triples)
         self.dsn = dsn.split('/')[1]  # dataset name
-
         if n_rw == 0:
             self.k_neighbors = self.build_k_hop(k_hop, dataset_name=self.dsn)
         else:
