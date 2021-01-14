@@ -48,23 +48,18 @@ class TrainDataset(Dataset):
 
     @time_it
     def build_weighted_rw(self, n_rw, k_hop, dataset_name):
-        """
-        Returns:
-            k_mat: sparse |V| * |V| adjacency matrix
-        """
         if n_rw == 0 or k_hop == 0:
             return None
 
-        save_path = f'cached_matrices/{dataset_name}_rw{n_rw}_hop{k_hop}_step{self.step}.npz'
+        save_path = f'cached_matrices/{dataset_name}_rw{n_rw}_hop{k_hop}_step{self.step}.npy'
         
         if os.path.exists(save_path):
             logging.info(f'Using cached matrix')
-            k_mat = sparse.load_npz(save_path)
-            return k_mat 
+            false_entity = np.load(save_path).item()
+            return false_entity
 
         # USING A MATRIX TO STORE THE RELATION
         a_mat, r_mat = self._get_adj_mat(dataset_name)
-        k_mat = sparse.dok_matrix((self.nentity, self.nentity))
 
         randomly_sampled = 0
 
@@ -76,42 +71,46 @@ class TrainDataset(Dataset):
             'pRotatE': self.model.pRotatE
         }
 
+        false_entity = {}
         for i in range(0, self.nentity):
             neighbors = a_mat[i]
             relations = r_mat[i]
-            # todo: simplify the code -- too ugly
-            head = self.model.entity_embedding[i].view(1, 1, -1)
             if len(neighbors.indices) == 0:
                 randomly_sampled += 1
-                walker = np.random.randint(self.nentity, size=n_rw)
-                k_mat[i, walker] = 1
+                e_walker = np.random.randint(self.nentity, size=n_rw)
+                r_walker = np.random.randint(self.nrelation, size=n_rw)
+                for j in range(0, n_rw):
+                    if (i, r_walker[i]) not in false_entity:
+                        false_entity[(i, r_walker[i])] = []
+                    false_entity[(i, r_walker[i])].append(e_walker[i])
             else:
-                for _ in range(0, n_rw):
-                    walker = i
-                    for _ in range(0, k_hop):
-                        # todo:
-                        # for each relation: get the max?
-                        # maybe we don't want calculate the weight every time
-                        weight = []
-                        for t_idx in neighbors.indices:
+                head = self.model.entity_embedding[i].view(1, 1, -1)
+                for r_idx in relations.indices:
+                    relation = self.model.relation_embedding[r_idx].view(1, 1, -1)
+                    for _ in range(0, n_rw):
+                        walker = i
+                        for _ in range(0, k_hop):
                             score = []
-                            for r_idx in relations.indices:
+                            for t_idx in neighbors.indices:
                                 tail = self.model.entity_embedding[t_idx].view(1, 1, -1)
-                                relation = self.model.relation_embedding[r_idx].view(1, 1, -1)
                                 single_score = model_func[self.model.model_name](head, relation, tail, 'single')
                                 score.append(single_score.item())
-                            weight.append(max(score))
-                        weight = F.softmax(torch.Tensor(weight), dim=0)
-                        idx = list(WeightedRandomSampler(weight, 1))[0]
-                        walker = neighbors.indices[idx]
-                        neighbors = a_mat[walker]
-                    k_mat[i, walker] += 1
+                            weight = F.softmax(torch.Tensor(weight), dim=0)
+                            idx = list(WeightedRandomSampler(weight, 1))[0]
+                            walker = neighbors.indices[idx]
+                            neighbors = a_mat[walker]
+                        if (i, r_idx) not in false_entity:
+                            false_entity[(i, r_idx)] = []
+                        false_entity[(i, r_idx)].append(walker)
+
+        for entity, relation in false_entity:
+            false_entity[(entity, relation)] = np.array(list(set(false_entity[(entity, relation)])))
+
         logging.info(f'randomly_sampled: {randomly_sampled}')
-        k_mat = k_mat.tocsr()
 
-        sparse.save_npz(save_path, k_mat)
+        np.save(save_path, false_entity)
 
-        return k_mat
+        return false_entity
     
     @time_it
     def build_unweighted_rw(self, n_rw, k_hop, dataset_name):
@@ -188,39 +187,78 @@ class TrainDataset(Dataset):
         negative_sample_size = 0
 
         k_hop_flag = True
-        while negative_sample_size < self.negative_sample_size:
-            if self.k_neighbors is not None and k_hop_flag:
+
+        if self.step == 0:
+            while negative_sample_size < self.negative_sample_size:
+                if self.k_neighbors is not None and k_hop_flag:
+                    if self.mode == 'head-batch':
+                        khop = self.k_neighbors[tail].indices
+                    elif self.mode == 'tail-batch':
+                        khop = self.k_neighbors[head].indices
+                    else:
+                        raise ValueError('Training batch mode %s not supported' % self.mode)
+                    negative_sample = khop[np.random.randint(len(khop), size=self.negative_sample_size * 2)].astype(
+                        np.int64)
+                else:
+                    negative_sample = np.random.randint(self.nentity, size=self.negative_sample_size * 2)
                 if self.mode == 'head-batch':
-                    khop = self.k_neighbors[tail].indices
+                    mask = np.in1d(
+                        negative_sample,
+                        self.true_head[(relation, tail)],
+                        assume_unique=True,
+                        invert=True
+                    )
                 elif self.mode == 'tail-batch':
-                    khop = self.k_neighbors[head].indices
+                    mask = np.in1d(
+                        negative_sample,
+                        self.true_tail[(head, relation)],
+                        assume_unique=True,
+                        invert=True
+                    )
                 else:
                     raise ValueError('Training batch mode %s not supported' % self.mode)
-                negative_sample = khop[np.random.randint(len(khop), size=self.negative_sample_size * 2)].astype(
-                    np.int64)
-            else:
-                negative_sample = np.random.randint(self.nentity, size=self.negative_sample_size * 2)
-            if self.mode == 'head-batch':
-                mask = np.in1d(
-                    negative_sample,
-                    self.true_head[(relation, tail)],
-                    assume_unique=True,
-                    invert=True
-                )
-            elif self.mode == 'tail-batch':
-                mask = np.in1d(
-                    negative_sample,
-                    self.true_tail[(head, relation)],
-                    assume_unique=True,
-                    invert=True
-                )
-            else:
-                raise ValueError('Training batch mode %s not supported' % self.mode)
-            negative_sample = negative_sample[mask]
-            negative_sample_list.append(negative_sample)
-            if negative_sample.size == 0:
-                k_hop_flag = False
-            negative_sample_size += negative_sample.size
+                negative_sample = negative_sample[mask]
+                negative_sample_list.append(negative_sample)
+                if negative_sample.size == 0:
+                    k_hop_flag = False
+                negative_sample_size += negative_sample.size
+
+        else:
+            while negative_sample_size < self.negative_sample_size:
+                if self.k_neighbors is not None and k_hop_flag:
+                    if self.mode == 'head-batch':
+                        khop = self.k_neighbors[(tail, relation)]
+                    elif self.mode == 'tail-batch':
+                        khop = self.k_neighbors[(head, relation)]
+                    else:
+                        raise ValueError('Training batch mode %s not supported' % self.mode)
+                    print(khop)
+                    negative_sample = khop[np.random.randint(len(khop), size=self.negative_sample_size * 2)].astype(
+                        np.int64)
+                else:
+                    negative_sample = np.random.randint(self.nentity, size=self.negative_sample_size * 2)
+                if self.mode == 'head-batch':
+                    mask = np.in1d(
+                        negative_sample,
+                        self.true_head[(relation, tail)],
+                        assume_unique=True,
+                        invert=True
+                    )
+                elif self.mode == 'tail-batch':
+                    mask = np.in1d(
+                        negative_sample,
+                        self.true_tail[(head, relation)],
+                        assume_unique=True,
+                        invert=True
+                    )
+                else:
+                    raise ValueError('Training batch mode %s not supported' % self.mode)
+                negative_sample = negative_sample[mask]
+                negative_sample_list.append(negative_sample)
+                if negative_sample.size == 0:
+                    k_hop_flag = False
+                negative_sample_size += negative_sample.size
+
 
         negative_sample = np.concatenate(negative_sample_list)[:self.negative_sample_size]
 
