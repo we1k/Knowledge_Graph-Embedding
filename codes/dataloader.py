@@ -7,8 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from scipy import sparse
-from torch.utils.data import Dataset
-
+from torch.utils.data import Dataset, WeightedRandomSampler
 
 def time_it(fn):
     def wrapper(*args, **kwargs):
@@ -103,7 +102,7 @@ class TrainDataset(Dataset):
                                 score.append(single_score.item())
                             weight.append(max(score))
                         weight = F.softmax(torch.Tensor(weight), dim=0)
-                        idx = torch.argmax(weight)
+                        idx = list(WeightedRandomSampler(weight, 1))[0]
                         walker = neighbors.indices[idx]
                         neighbors = a_mat[walker]
                     k_mat[i, walker] += 1
@@ -172,7 +171,7 @@ class TrainDataset(Dataset):
         if self.step == 0:
             self.k_neighbors = self.build_unweighted_rw(n_rw=n_rw, k_hop=k_hop, dataset_name=self.dsn)
         else:
-            self.k_neighbors = self.build_weighted_rw(n_rw=n_rw/100, k_hop=k_hop, dataset_name=self.dsn)
+            self.k_neighbors = self.build_weighted_rw(n_rw=30, k_hop=k_hop, dataset_name=self.dsn)
 
     def __len__(self):
         return self.len
