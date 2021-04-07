@@ -1,0 +1,12 @@
+CUDA_VISIBLE_DEVICES=2 python -u codes/run.py --cuda \
+    --do_train --do_valid --do_test\
+    --data_path data/wn18rr \
+    --model DistMult \
+    -n 512 -b 1024 -d 1000 \
+    -g 200.0 -a 1.0 \
+    -lr 0.002 --max_steps 50000 \
+    --changing_weight 40000 \
+    --valid_steps 10000 \
+    -save models/Dist_wn18rr_2_3000  --test_batch_size 8 \
+    -khop 2 -nrw 3000 \
+    -r 0.000005

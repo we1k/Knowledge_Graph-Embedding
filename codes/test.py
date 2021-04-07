@@ -139,8 +139,6 @@ def main():
 
         return k_mat
 
-    k_neighbors=build_k_hop(3, 'wn18rr')
 
 
 if __name__ == "__main__":
-    main()

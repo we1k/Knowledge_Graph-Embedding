@@ -51,9 +51,9 @@ def parse_args(args=None):
     parser.add_argument('--max_steps', default=100000, type=int)
     parser.add_argument('--warm_up_steps', default=None, type=int)
 
-    parser.add_argument('--changing_weight', default=5000, type=int)
-    parser.add_argument('--save_checkpoint_steps', default=10000, type=int)
-    parser.add_argument('--valid_steps', default=10000, type=int)
+    parser.add_argument('--changing_weight', default=4000, type=int)
+    parser.add_argument('--save_checkpoint_steps', default=2000, type=int)
+    parser.add_argument('--valid_steps', default=2000, type=int)
     parser.add_argument('--log_steps', default=100, type=int, help='train log every xx steps')
     parser.add_argument('--test_log_steps', default=1000, type=int, help='valid/test log every xx steps')
 
@@ -153,13 +153,14 @@ def log_metrics(mode, step, metrics):
     for metric in metrics:
         logging.info('%s %s at step %d: %f' % (mode, metric, step, metrics[metric]))
 
-def build_train_iterator(train_triples, model, args):
+def build_train_iterator(train_triples, model, step, args):
     '''
     Build a new training dataloader iterator
-    '''
+    ''' 
     train_dataloader_head = DataLoader(
         TrainDataset(train_triples,
                      model,
+                     step,
                      args.negative_sample_size,
                      'head-batch',
                      args.negative_k_hop_sampling,
@@ -167,14 +168,14 @@ def build_train_iterator(train_triples, model, args):
                      dsn=args.data_path),
         batch_size=args.batch_size,
         shuffle=True,
-        # todo: worker_num ?
-        # num_workers=max(1, args.cpu_num//2),
+        num_workers=max(1, args.cpu_num//2),
         collate_fn=TrainDataset.collate_fn
     )
 
     train_dataloader_tail = DataLoader(
         TrainDataset(train_triples,
                     model,
+                    step,
                     args.negative_sample_size,
                     'tail-batch',
                     args.negative_k_hop_sampling,
@@ -182,7 +183,7 @@ def build_train_iterator(train_triples, model, args):
                     dsn=args.data_path),
         batch_size=args.batch_size,
         shuffle=True,
-        # num_workers=max(1, args.cpu_num//2),
+        num_workers=max(1, args.cpu_num//2),
         collate_fn=TrainDataset.collate_fn
     )
 
@@ -249,40 +250,6 @@ def main(args):
         double_entity_embedding=args.double_entity_embedding,
         double_relation_embedding=args.double_relation_embedding
     )
-    # todo
-    # need to expand_dim a,b,c
-    # in form of (batch_size, negative_sample_size, embedding_dim)
-    tri1 = all_true_triples[0]
-    tri1 = torch.LongTensor(tri1)
-    head, relation, tail= tri1[0], tri1[1], tri1[2]
-
-    head = torch.index_select(
-        kge_model.entity_embedding,
-        dim=0,
-        index=head
-    ).unsqueeze(1)
-
-    tail = torch.index_select(
-        kge_model.entity_embedding,
-        dim=0,
-        index=tail
-    ).unsqueeze(1)
-    relation = torch.index_select(
-        kge_model.relation_embedding,
-        dim=0,
-        index=relation
-    ).unsqueeze(1)
-    
-    Dataset = TrainDataset(train_triples,
-                         kge_model,
-                         args.negative_sample_size,
-                         'head-batch',
-                         args.negative_k_hop_sampling,
-                         args.negative_n_random_walks,
-                         dsn=args.data_path)
-    print('the TransE score of ...')
-    print(Dataset.nentity)
-
 
     logging.info('Model Parameter Configuration:')
     for name, param in kge_model.named_parameters():
@@ -294,7 +261,7 @@ def main(args):
     if args.do_train:
         # Set training dataloader iterator
 
-        train_iterator = build_train_iterator(train_triples, kge_model, args)
+        train_iterator = build_train_iterator(train_triples, kge_model, 0, args)
 
         # Set training configuration
         current_learning_rate = args.learning_rate
@@ -366,10 +333,9 @@ def main(args):
                 }
                 save_model(kge_model, optimizer, save_variable_list, args)
 
-            if step % args.changing_weight == 0:
+            if step == args.changing_weight :
                 logging.info('Resampling with new weight')
-                train_iterator = build_train_iterator(train_triples, kge_model, args)
-                # todo: check if there are any bug
+                train_iterator = build_train_iterator(train_triples, kge_model, step, args)
 
 
             if step % args.log_steps == 0:
@@ -380,7 +346,7 @@ def main(args):
                 training_logs = []
 
             if args.do_valid and step % args.valid_steps == 0:
-                logging.info('Evaluating on Valid Da·taset...')
+                logging.info('Evaluating on Valid Dataset...')
                 metrics = kge_model.test_step(kge_model, valid_triples, all_true_triples, args)
                 log_metrics('Valid', step, metrics)
 
