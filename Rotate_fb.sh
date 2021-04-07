@@ -1,0 +1,12 @@
+CUDA_VISIBLE_DEVICES=3 python -u codes/run.py --cuda \
+    --do_train --do_valid --do_test\
+    --data_path data/wn18rr \
+    --model RotatE \
+    -n 1024 -b 256 -d 1000 \
+    -g 9.0 -a 1.0 \
+    -lr 0.00005 --max_steps 100000 \
+    --changing_weight 60000 \
+    --valid_steps 10000 \
+    -save models/TransE_FB15k-237_2_4000 --test_batch_size 16 \
+    -khop 2 -nrw 4000 \
+    -de
