@@ -4,3 +4,6 @@
 *.npy
 draft/:
 models/:
+/draft:
+/models:
+*.pyc
